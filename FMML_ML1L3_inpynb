@@ -1,0 +1,692 @@
+Data Augmentation
+FMML Module 1, Lab 3
+
+In this lab, we will see how augmentation of data samples help in improving the machine learning performance. Augmentation is the process of creating new data samples by making reasonable modifications to the original data samples. This is particularly useful when the size of the training data is small. We will use the MNISt dataset for this lab. We will also reuse functions from the previous labs.
+
+
+[ ]
+import numpy as np
+import matplotlib.pyplot as plt
+from keras.datasets import mnist
+from sklearn.utils.extmath import cartesian
+from skimage.transform import rotate, AffineTransform, warp
+
+rng = np.random.default_rng(seed=42)
+
+[ ]
+# loading the dataset
+(train_X, train_y), (test_X, test_y) = mnist.load_data()
+
+# normalizing the data
+train_X = train_X / 255
+test_X = test_X / 255
+
+# subsample from images and labels. Otherwise it will take too long!
+train_X = train_X[::1200, :, :].copy()
+train_y = train_y[::1200].copy()
+Downloading data from https://storage.googleapis.com/tensorflow/tf-keras-datasets/mnist.npz
+11490434/11490434 [==============================] - 0s 0us/step
+Let us borrow a few functions from the previous labs:
+
+
+[ ]
+def NN1(traindata, trainlabel, query):
+    """
+    This function takes in the training data, training labels and a query point
+    and returns the predicted label for the query point using the nearest neighbour algorithm
+
+    traindata: numpy array of shape (n,d) where n is the number of samples and d is the number of features
+    trainlabel: numpy array of shape (n,) where n is the number of samples
+    query: numpy array of shape (d,) where d is the number of features
+
+    returns: the predicted label for the query point which is the label of the training data which is closest to the query point
+    """
+    diff = (
+        traindata - query
+    )  # find the difference between features. Numpy automatically takes care of the size here
+    sq = diff * diff  # square the differences
+    dist = sq.sum(1)  # add up the squares
+    label = trainlabel[np.argmin(dist)]
+    return label
+
+
+def NN(traindata, trainlabel, testdata):
+    """
+    This function takes in the training data, training labels and test data
+    and returns the predicted labels for the test data using the nearest neighbour algorithm
+
+    traindata: numpy array of shape (n,d) where n is the number of samples and d is the number of features
+    trainlabel: numpy array of shape (n,) where n is the number of samples
+    testdata: numpy array of shape (m,d) where m is the number of test samples and d is the number of features
+
+    returns: the predicted labels for the test data which is the label of the training data which is closest to each test point
+    """
+    traindata = traindata.reshape(-1, 28*28)
+    testdata = testdata.reshape(-1, 28*28)
+    predlabel = np.array([NN1(traindata, trainlabel, i) for i in testdata])
+    return predlabel
+
+
+def Accuracy(gtlabel, predlabel):
+    """
+    This function takes in the ground-truth labels and predicted labels
+    and returns the accuracy of the classifier
+
+    gtlabel: numpy array of shape (n,) where n is the number of samples
+    predlabel: numpy array of shape (n,) where n is the number of samples
+
+    returns: the accuracy of the classifier which is the number of correct predictions divided by the total number of predictions
+    """
+    assert len(gtlabel) == len(
+        predlabel
+    ), "Length of the ground-truth labels and predicted labels should be the same"
+    correct = (
+        gtlabel == predlabel
+    ).sum()  # count the number of times the groundtruth label is equal to the predicted label.
+    return correct / len(gtlabel)
+In this lab, we will use the image pixels themselves as features, instead of extracting features. Each image has 28*28 pixels, so we will flatten them to 784 pixels to use as features. Note that this is very compute intensive and will take a long time. Let us first check the baseline accuracy on the test set without any augmentations. We hope that adding augmentations will help us to get better results.
+
+
+[ ]
+testpred = NN(train_X, train_y, test_X)
+print("Baseline accuracy without augmentation:",
+      Accuracy(test_y, testpred)*100, "%")
+Baseline accuracy without augmentation: 64.72 %
+Let us try to improve this accuracy using augmentations. When we create augmentations, we have to make sure that the changes reflect what will naturally occur in the dataset. For example, we should not add colour to our samples as an augmentation because they do not naturally occur. We should not also flip the images in MNIST, because flipped images have different meanings for digits. So, we will use the following augmentations:
+
+Augmentation 1: Rotation
+Let us try rotating the image a little. We will use the rotate function from the skimage module. We will rotate the image by 10 degrees and -10 degrees. Rotation is a reasonable augmentation because the digit will still be recognizable even after rotation and is representative of the dataset.
+
+
+[ ]
+fig, axs = plt.subplots(1, 3, figsize=(15, 5))
+
+axs[0].imshow(train_X[2], cmap="gray")
+axs[0].set_title("Original Image")
+
+axs[1].imshow(rotate(train_X[2], 10), cmap="gray")
+axs[1].set_title("Rotate +10 degrees")
+
+axs[2].imshow(rotate(train_X[2], -10), cmap="gray")
+axs[2].set_title("Rotate -10 degrees")
+
+plt.show()
+
+After rotating, the the class of the image is still the same. Let us make a function to rotate multiple images by random angles. We want a slightly different image every time we run this function. So, we generate a random number between 0 and 1 and change it so that it lies between -constraint/2 and +constraint/2
+
+
+[ ]
+def augRotate(sample, angleconstraint):
+    """
+    This function takes in a sample and an angle constraint and returns the augmented sample
+    by rotating the sample by a random angle within the angle constraint
+
+    sample: numpy array of shape (n,d) where n is the number of samples and d is the number of features
+    angleconstraint: the maximum angle by which the sample can be rotated
+
+    returns: the augmented sample which is the input sample rotated by a random angle within the angle constraint
+    """
+    if angleconstraint == 0:
+        return sample
+    if len(sample.shape) == 2:
+        # make sure the sample is 3 dimensional
+        sample = np.expand_dims(sample, 0)
+    angle = rng.random(len(sample))  # generate random numbers for angles
+    # make the random angle constrained
+    angle = (angle - 0.5) * angleconstraint
+    nsample = sample.copy()  # preallocate the augmented array to make it faster
+    for ii in range(len(sample)):
+        nsample[ii] = rotate(sample[ii], angle[ii])
+    return np.squeeze(nsample)  # take care if the input had only one sample.
+This function returns a slightly different image each time we call it. So we can increase the number of images in the sample by any multiple.
+
+
+[ ]
+sample = train_X[20]
+angleconstraint = 70
+
+fig, axs = plt.subplots(1, 5, figsize=(15, 5))
+
+axs[0].imshow(sample, cmap="gray")
+axs[0].set_title("Original Image")
+
+axs[1].imshow(augRotate(sample, angleconstraint), cmap="gray")
+axs[1].set_title("Aug. Sample 1")
+
+axs[2].imshow(augRotate(sample, angleconstraint), cmap="gray")
+axs[2].set_title("Aug. Sample 2")
+
+axs[3].imshow(augRotate(sample, angleconstraint), cmap="gray")
+axs[3].set_title("Aug. Sample 3")
+
+axs[4].imshow(augRotate(sample, angleconstraint), cmap="gray")
+axs[4].set_title("Aug. Sample 4")
+
+plt.show()
+
+Let us augment the whole dataset and see if this improves the test accuracy
+
+
+[ ]
+# hyperparameters
+angleconstraint = 60
+naugmentations = 5
+
+# augment
+augdata = train_X  # we include the original images also in the augmented dataset
+auglabel = train_y
+for ii in range(naugmentations):
+    augdata = np.concatenate(
+        (augdata, augRotate(train_X, angleconstraint))
+    )  # concatenate the augmented data to the set
+    auglabel = np.concatenate(
+        (auglabel, train_y)
+    )  # the labels don't change when we augment
+
+# check the test accuracy
+testpred = NN(augdata, auglabel, test_X)
+print("Accuracy after rotation augmentation:", Accuracy(test_y, testpred)*100, "%")
+Accuracy after rotation augmentation: 67.66 %
+We can notice a 3-4% improvement compared to non-augmented version of the dataset!
+
+The angle constraint is a hyperparameter which we have to tune using a validation set. (Here we are not doing that for time constraints). Let us try a grid search to find the best angle constraint. We will try angles between 0 and 90 degrees. We can also try different multiples of the original dataset. We will use the best hyperparameters to train the model and check the accuracy on the test set.
+
+
+[ ]
+angleconstraints = [0, 10, 20, 30, 40, 50, 60, 70, 80, 90]  # the values we want to test
+accuracies = np.zeros(
+    len(angleconstraints), dtype=float
+)  # we will save the values here
+
+for ii in range(len(angleconstraints)):
+    # create the augmented dataset
+    augdata = train_X  # we include the original images also in the augmented dataset
+    auglabel = train_y
+    for jj in range(naugmentations):
+        augdata = np.concatenate(
+            (augdata, augRotate(train_X, angleconstraints[ii]))
+        )  # concatenate the augmented data to the set
+        auglabel = np.concatenate(
+            (auglabel, train_y)
+        )  # the labels don't change when we augment
+
+    # check the test accuracy
+    testpred = NN(augdata, auglabel, test_X)
+    accuracies[ii] = Accuracy(test_y, testpred)
+    print(
+        "Accuracy after rotation augmentation constrained by",
+        angleconstraints[ii],
+        "degrees is",
+        accuracies[ii]*100,
+        "%",
+        flush=True,
+    )
+Accuracy after rotation augmentation constrained by 0 degrees is 64.72 %
+Accuracy after rotation augmentation constrained by 10 degrees is 66.79 %
+Accuracy after rotation augmentation constrained by 20 degrees is 67.84 %
+Accuracy after rotation augmentation constrained by 30 degrees is 68.47 %
+Accuracy after rotation augmentation constrained by 40 degrees is 67.63 %
+Accuracy after rotation augmentation constrained by 50 degrees is 67.65 %
+Accuracy after rotation augmentation constrained by 60 degrees is 65.3 %
+Accuracy after rotation augmentation constrained by 70 degrees is 66.06 %
+Accuracy after rotation augmentation constrained by 80 degrees is 64.61 %
+Accuracy after rotation augmentation constrained by 90 degrees is 64.31 %
+Let us see the best value for angle constraint: (Ideally this should be done on validation set, not test set)
+
+
+[ ]
+fig = plt.figure()
+ax = fig.add_axes([0.1, 0.1, 0.8, 0.8])
+# plot the variation of accuracy
+ax.plot(angleconstraints, accuracies)
+ax.set_xlabel("angle")
+ax.set_ylabel("accuracy")
+
+# plot the maximum accuracy
+maxind = np.argmax(accuracies)
+plt.scatter(angleconstraints[maxind], accuracies[maxind], c="red")
+
+Augmentation 2: Shear
+Let us try one more augmentation: shear. Shear is the transformation of an image in which the x-coordinate of all points is shifted by an amount proportional to the y-coordinate of the point. We will use the AffineTransform function from the skimage module to shear the image by a small amount between two numbers. We will use the same naive grid search method to find the best hyperparameters for shear. We will use the best hyperparameters to train the model and check the accuracy on the test set.
+
+
+[ ]
+def shear(sample, amount):
+    """
+    This function takes in a sample and an amount and returns the augmented sample
+    by shearing the sample by the given amount
+
+    sample: numpy array of shape (n,d) where n is the number of samples and d is the number of features
+    amount: the amount by which the sample should be sheared
+
+    returns: the augmented sample which is the input sample sheared by the given amount
+    """
+    tform = AffineTransform(shear=amount)
+    img = warp(sample, tform)
+
+    # Applying shear makes the digit off-center
+    # Since all images are centralized, we will do the same here
+    col = img.sum(0).nonzero()[0]
+    row = img.sum(1).nonzero()[0]
+    if len(col) > 0 and len(row) > 0:
+        xshift = int(sample.shape[0] / 2 - (row[0] + row[-1]) / 2)
+        yshift = int(sample.shape[1] / 2 - (col[0] + col[-1]) / 2)
+        img = np.roll(img, (xshift, yshift), (0, 1))
+    return img
+
+[ ]
+sample = train_X[2]
+fig, axs = plt.subplots(1, 4, figsize=(15, 5))
+
+axs[0].imshow(sample, cmap="gray")
+axs[0].set_title("Original Image")
+
+axs[1].imshow(shear(sample, 0.2), cmap="gray")
+axs[1].set_title("Amount = 0.2")
+
+axs[2].imshow(shear(sample, 0.4), cmap="gray")
+axs[2].set_title("Amount = 0.4")
+
+axs[3].imshow(shear(sample, 0.6), cmap="gray")
+axs[3].set_title("Amount = 0.6")
+
+plt.show()
+
+Create an augmentation function which applies a random shear according to the constraint we provide:
+
+
+[ ]
+def augShear(sample, shearconstraint):
+    """
+    This function takes in a sample and a shear constraint and returns the augmented sample
+    by shearing the sample by a random amount within the shear constraint
+
+    sample: numpy array of shape (n,d) where n is the number of samples and d is the number of features
+    shearconstraint: the maximum shear by which the sample can be sheared
+
+    returns: the augmented sample which is the input sample sheared by a random amount within the shear constraint
+    """
+    if shearconstraint == 0:
+        return sample
+    if len(sample.shape) == 2:
+        # make sure the sample is 3 dimensional
+        sample = np.expand_dims(sample, 0)
+    amt = rng.random(len(sample))  # generate random numbers for shear
+    amt = (amt - 0.5) * shearconstraint  # make the random shear constrained
+    nsample = sample.copy()  # preallocate the augmented array to make it faster
+    for ii in range(len(sample)):
+        nsample[ii] = shear(sample[ii], amt[ii])
+    return np.squeeze(nsample)  # take care if the input had only one sample.
+Let us do a grid search to find the best shear constraint.
+
+
+[ ]
+shearconstraints = [
+    0,
+    0.2,
+    0.4,
+    0.6,
+    0.8,
+    1.0,
+    1.2,
+    1.4,
+    1.6,
+    1.8,
+    2.0,
+]  # the values we want to test
+accuracies = np.zeros(
+    len(shearconstraints), dtype=float
+)  # we will save the values here
+
+for ii in range(len(shearconstraints)):
+    # create the augmented dataset
+    augdata = train_X  # we include the original images also in the augmented dataset
+    auglabel = train_y
+    for jj in range(naugmentations):
+        augdata = np.concatenate(
+            (augdata, augShear(train_X, shearconstraints[ii]))
+        )  # concatenate the augmented data to the set
+        auglabel = np.concatenate(
+            (auglabel, train_y)
+        )  # the labels don't change when we augment
+
+    # check the test accuracy
+    testpred = NN(augdata, auglabel, test_X)
+    accuracies[ii] = Accuracy(test_y, testpred)
+    print(
+        "Accuracy after shear augmentation constrained by",
+        shearconstraints[ii],
+        "is",
+        accuracies[ii]*100,
+        "%",
+        flush=True,
+    )
+Accuracy after shear augmentation constrained by 0 is 64.72 %
+Accuracy after shear augmentation constrained by 0.2 is 61.95 %
+Accuracy after shear augmentation constrained by 0.4 is 63.07000000000001 %
+Accuracy after shear augmentation constrained by 0.6 is 64.25 %
+Accuracy after shear augmentation constrained by 0.8 is 65.42 %
+Accuracy after shear augmentation constrained by 1.0 is 64.92999999999999 %
+Accuracy after shear augmentation constrained by 1.2 is 63.82 %
+Accuracy after shear augmentation constrained by 1.4 is 62.839999999999996 %
+Accuracy after shear augmentation constrained by 1.6 is 60.14000000000001 %
+Accuracy after shear augmentation constrained by 1.8 is 61.29 %
+Accuracy after shear augmentation constrained by 2.0 is 64.46 %
+
+[ ]
+fig = plt.figure()
+ax = fig.add_axes([0.1, 0.1, 0.8, 0.8])
+# plot the variation of accuracy
+ax.plot(shearconstraints, accuracies)
+ax.set_xlabel("angle")
+ax.set_ylabel("accuracy")
+
+# plot the maximum accuracy
+maxind = np.argmax(accuracies)
+plt.scatter(shearconstraints[maxind], accuracies[maxind], c="red")
+
+Augmentation 3: Rotation + Shear
+We can do multiple augmentations at the same time. Here is a function to do both shear and rotation to the sample. In this case, we will have two hyperparameters.
+
+
+[ ]
+def augRotateShear(sample, angleconstraint, shearconstraint):
+    """
+    This function takes in a sample, an angle constraint and a shear constraint and returns the augmented sample
+    by rotating the sample by a random angle within the angle constraint and shearing the sample by a random amount within the shear constraint
+
+    sample: numpy array of shape (n,d) where n is the number of samples and d is the number of features
+    angleconstraint: the maximum angle by which the sample can be rotated
+    shearconstraint: the maximum shear by which the sample can be sheared
+
+    returns: the augmented sample which is the input sample rotated by a random angle within the angle constraint and sheared by a random amount within the shear constraint
+    """
+    if len(sample.shape) == 2:
+        # make sure the sample is 3 dimensional
+        sample = np.expand_dims(sample, 0)
+    amt = rng.random(len(sample))  # generate random numbers for shear
+    amt = (amt - 0.5) * shearconstraint  # make the random shear constrained
+    angle = rng.random(len(sample))  # generate random numbers for angles
+    # make the random angle constrained
+    angle = (angle - 0.5) * angleconstraint
+    nsample = sample.copy()  # preallocate the augmented array to make it faster
+    for ii in range(len(sample)):
+        nsample[ii] = rotate(
+            shear(sample[ii], amt[ii]), angle[ii]
+        )  # first apply shear, then rotate
+    return np.squeeze(nsample)  # take care if the input had only one sample.
+Since we have two hyperparameters, we have to do the grid search on a 2 dimensional matrix. We can use our previous experience to inform where to search for the best hyperparameters.
+
+
+[ ]
+shearconstraints = [
+    0,
+    0.2,
+    0.4,
+    0.6,
+    0.8,
+    1.0,
+    1.2,
+    1.4,
+    1.6,
+]  # the values we want to test
+angleconstraints = [0, 10, 20, 30, 40, 50, 60]  # the values we want to test
+# cartesian product of both
+hyp = cartesian((shearconstraints, angleconstraints))
+
+accuracies = np.zeros(len(hyp), dtype=float)  # we will save the values here
+
+for ii in range(len(hyp)):
+    # create the augmented dataset
+    augdata = train_X  # we include the original images also in the augmented dataset
+    auglabel = train_y
+    for jj in range(naugmentations):
+        augdata = np.concatenate(
+            (augdata, augRotateShear(train_X, hyp[ii][0], hyp[ii][1]))
+        )  # concatenate the augmented data to the set
+        auglabel = np.concatenate(
+            (auglabel, train_y)
+        )  # the labels don't change when we augment
+
+    # check the test accuracy
+    testpred = NN(augdata, auglabel, test_X)
+    accuracies[ii] = Accuracy(test_y, testpred)
+    print(
+        "Accuracy after augmentation shear:",
+        hyp[ii][0],
+        "angle:",
+        hyp[ii][1],
+        "is",
+        accuracies[ii]*100,
+        "%",
+        flush=True,
+    )
+Accuracy after augmentation shear: 0.0 angle: 0.0 is 63.32 %
+Accuracy after augmentation shear: 0.0 angle: 10.0 is 59.419999999999995 %
+Accuracy after augmentation shear: 0.0 angle: 20.0 is 58.19 %
+Accuracy after augmentation shear: 0.0 angle: 30.0 is 62.35000000000001 %
+Accuracy after augmentation shear: 0.0 angle: 40.0 is 60.89 %
+Accuracy after augmentation shear: 0.0 angle: 50.0 is 57.620000000000005 %
+Accuracy after augmentation shear: 0.0 angle: 60.0 is 60.629999999999995 %
+Accuracy after augmentation shear: 0.2 angle: 0.0 is 63.41 %
+Accuracy after augmentation shear: 0.2 angle: 10.0 is 59.419999999999995 %
+Accuracy after augmentation shear: 0.2 angle: 20.0 is 59.19 %
+Accuracy after augmentation shear: 0.2 angle: 30.0 is 58.209999999999994 %
+Accuracy after augmentation shear: 0.2 angle: 40.0 is 61.12 %
+Accuracy after augmentation shear: 0.2 angle: 50.0 is 58.209999999999994 %
+Accuracy after augmentation shear: 0.2 angle: 60.0 is 60.91 %
+Accuracy after augmentation shear: 0.4 angle: 0.0 is 63.370000000000005 %
+Accuracy after augmentation shear: 0.4 angle: 10.0 is 61.160000000000004 %
+Accuracy after augmentation shear: 0.4 angle: 20.0 is 58.01 %
+Accuracy after augmentation shear: 0.4 angle: 30.0 is 57.53 %
+Accuracy after augmentation shear: 0.4 angle: 40.0 is 60.86 %
+Accuracy after augmentation shear: 0.4 angle: 50.0 is 58.67 %
+Accuracy after augmentation shear: 0.4 angle: 60.0 is 59.08 %
+Accuracy after augmentation shear: 0.6 angle: 0.0 is 63.3 %
+Accuracy after augmentation shear: 0.6 angle: 10.0 is 60.27 %
+Accuracy after augmentation shear: 0.6 angle: 20.0 is 62.39 %
+Accuracy after augmentation shear: 0.6 angle: 30.0 is 59.37 %
+Accuracy after augmentation shear: 0.6 angle: 40.0 is 60.040000000000006 %
+Accuracy after augmentation shear: 0.6 angle: 50.0 is 60.31999999999999 %
+Accuracy after augmentation shear: 0.6 angle: 60.0 is 62.019999999999996 %
+Accuracy after augmentation shear: 0.8 angle: 0.0 is 63.4 %
+Accuracy after augmentation shear: 0.8 angle: 10.0 is 60.23 %
+Accuracy after augmentation shear: 0.8 angle: 20.0 is 59.919999999999995 %
+Accuracy after augmentation shear: 0.8 angle: 30.0 is 58.85 %
+Accuracy after augmentation shear: 0.8 angle: 40.0 is 59.89 %
+Accuracy after augmentation shear: 0.8 angle: 50.0 is 60.129999999999995 %
+Accuracy after augmentation shear: 0.8 angle: 60.0 is 62.050000000000004 %
+Accuracy after augmentation shear: 1.0 angle: 0.0 is 63.36000000000001 %
+Accuracy after augmentation shear: 1.0 angle: 10.0 is 61.08 %
+Accuracy after augmentation shear: 1.0 angle: 20.0 is 58.919999999999995 %
+Accuracy after augmentation shear: 1.0 angle: 30.0 is 60.56 %
+Accuracy after augmentation shear: 1.0 angle: 40.0 is 59.13 %
+Accuracy after augmentation shear: 1.0 angle: 50.0 is 58.91 %
+Accuracy after augmentation shear: 1.0 angle: 60.0 is 59.489999999999995 %
+Accuracy after augmentation shear: 1.2 angle: 0.0 is 63.480000000000004 %
+Accuracy after augmentation shear: 1.2 angle: 10.0 is 56.97 %
+Accuracy after augmentation shear: 1.2 angle: 20.0 is 60.709999999999994 %
+Accuracy after augmentation shear: 1.2 angle: 30.0 is 59.489999999999995 %
+Accuracy after augmentation shear: 1.2 angle: 40.0 is 58.79 %
+Accuracy after augmentation shear: 1.2 angle: 50.0 is 60.07 %
+Accuracy after augmentation shear: 1.2 angle: 60.0 is 61.160000000000004 %
+Accuracy after augmentation shear: 1.4 angle: 0.0 is 63.57000000000001 %
+Accuracy after augmentation shear: 1.4 angle: 10.0 is 59.95 %
+Accuracy after augmentation shear: 1.4 angle: 20.0 is 59.550000000000004 %
+Accuracy after augmentation shear: 1.4 angle: 30.0 is 60.06 %
+Accuracy after augmentation shear: 1.4 angle: 40.0 is 60.08 %
+Accuracy after augmentation shear: 1.4 angle: 50.0 is 60.39 %
+Accuracy after augmentation shear: 1.4 angle: 60.0 is 59.489999999999995 %
+Accuracy after augmentation shear: 1.6 angle: 0.0 is 63.32 %
+Accuracy after augmentation shear: 1.6 angle: 10.0 is 59.12 %
+Accuracy after augmentation shear: 1.6 angle: 20.0 is 59.8 %
+Accuracy after augmentation shear: 1.6 angle: 30.0 is 58.08 %
+Accuracy after augmentation shear: 1.6 angle: 40.0 is 61.73 %
+Accuracy after augmentation shear: 1.6 angle: 50.0 is 59.489999999999995 %
+Accuracy after augmentation shear: 1.6 angle: 60.0 is 60.309999999999995 %
+Let us plot it two dimensionally to see which is the best value for the hyperparameters:
+
+
+[ ]
+fig = plt.figure()
+ax = fig.add_axes([0.1, 0.1, 0.8, 0.8])
+im = ax.imshow(
+    accuracies.reshape((len(shearconstraints), len(angleconstraints))), cmap="hot"
+)
+ax.set_xlabel("Angle")
+ax.set_ylabel("Shear")
+ax.set_xticks(np.arange(len(angleconstraints)))
+ax.set_xticklabels(angleconstraints)
+ax.set_yticks(np.arange(len(shearconstraints)))
+ax.set_yticklabels(shearconstraints)
+plt.colorbar(im)
+
+It seems that rotation and shear don't mix! The best accuracy is when rotation is zero.
+
+Questions
+Try these questions for better understanding. You may not be able to solve all of them.
+
+What is the best value for angle constraint and shear constraint you got? How much did the accuracy improve as compared to not using augmentations?
+To provide a detailed answer, I would need to know the context of the problem you're referring to. Specifically, whether you're working with a deep learning model, geometric computations, structural analysis, or any other area where "angle constraint" and "shear constraint" are relevant. However, I can offer a general explanation on the role of angle and shear constraints in several contexts and how they may improve performance.
+
+### Angle Constraint and Shear Constraint in Different Contexts:
+
+1. **Deep Learning (Augmentation Techniques)**:
+   - **Angle Constraint**: This typically refers to restrictions on the rotation of images or features during augmentation. It ensures that transformations (like rotating an image) don't distort the object in a way that the model would never encounter in a real-world scenario. For example, in object detection or image classification, rotating an image within a certain angle range (e.g., -30 to +30 degrees) might improve model robustness without losing information about the object.
+   - **Shear Constraint**: Similar to angle constraints, shear constraints refer to limiting the shear (distortion) applied during augmentation. In practice, this could mean limiting how much an image can be sheared, i.e., distorted at an angle along one axis while keeping the other axis fixed.
+
+2. **Geometric Computations (Mesh Generation, Finite Element Methods, etc.)**:
+   - **Angle Constraint**: In structural mechanics or mesh generation, angle constraints are used to maintain certain angles (e.g., in triangles or quadrilaterals) within a specific range to avoid numerical instability or poor-quality elements in simulations.
+   - **Shear Constraint**: In simulations or optimization problems, shear constraints help in ensuring that the material deformation or geometric transformation doesn't lead to unrealistic results like excessive shear strain, which could lead to failure in materials or structures.
+
+### Performance Improvements (Accuracy):
+The improvement in accuracy depends on the specific application and how augmentations are applied. In the case of machine learning, augmentations like rotation and shearing often help generalize the model better by preventing overfitting. Without augmentations, the model might perform well on the training data but fail to generalize to new, unseen data. By applying constraints like angle and shear, you limit the possible distortions while introducing variability, ensuring the model remains robust but not overfit.
+
+**In Deep Learning:**
+- **Without Augmentation**: A model might show higher accuracy on the training dataset but poor performance on validation or test datasets (i.e., overfitting).
+- **With Angle & Shear Constraints**: Using controlled augmentations can help the model generalize better, often improving performance on unseen data. For example, a model might see a 2-5% improvement in accuracy after applying angle and shear constraints during training.
+
+**In Geometric Computations:**
+- **Without Constraints**: A mesh or simulation might result in poor numerical stability or unrealistic deformation.
+- **With Constraints**: Adding angle and shear constraints improves the quality and stability of the mesh, leading to better simulation results. The performance can improve significantly in terms of computational efficiency and accuracy, especially when trying to solve for real-world behaviors.
+
+### How Much Does Accuracy Improve?
+The improvement in accuracy depends on how the augmentations are implemented. In many cases, you may see a small but significant improvement in generalization and performance after applying well-tuned angle and shear constraints. This could range from a modest improvement (e.g., 2-5%) to a more substantial improvement (10-20%) depending on the problem's complexity and the effectiveness of the augmentations.
+
+If you have a specific dataset, model, or scenario in mind, I can provide more precise insights regarding performance metrics and improvements.
+Can you increase the accuracy by increasing the number of augmentations from each sample?
+Yes, increasing the number of augmentations per sample can potentially improve the accuracy of a model, but it depends on several factors. Here's an overview of how augmenting more samples can influence model performance, and what to consider when deciding whether to apply additional augmentations.
+
+### How Increasing the Number of Augmentations Can Help:
+1. **Better Generalization**:
+   - **Variation Exposure**: When you apply multiple augmentations to each sample, the model is exposed to a wider variety of variations of that sample. This could include different rotations, shearing, scaling, translations, or even color adjustments. By doing so, the model learns to recognize the object or feature in more diverse situations, which can help it generalize better to unseen data.
+   - **Reduction in Overfitting**: Augmentation is a form of regularization. If you don't use augmentations, the model could overfit to the training data (learning very specific features or noise). Augmenting the data with different transformations creates more diverse training examples, which forces the model to focus on the core features of the object or scene, rather than memorizing specific patterns from the training data.
+
+2. **Improved Robustness**:
+   - **Exposure to Real-World Variability**: In many real-world applications (e.g., object detection, image classification), the objects may appear in various orientations, scales, or lighting conditions. By augmenting each sample with variations, the model can better handle real-world input variability.
+   - **Noise Tolerance**: If you apply random noise, contrast variations, or slight distortions, the model becomes more resilient to imperfect or noisy inputs in practical scenarios.
+
+3. **Larger Effective Dataset**:
+   - By applying multiple augmentations to each sample, you artificially increase the size of the dataset, which can be helpful if you have limited training data. For small datasets, increasing the number of augmented versions per sample allows the model to learn from a larger set of effective examples.
+
+### Considerations and Potential Downsides:
+1. **Diminishing Returns**:
+   - **Too Many Augmentations**: While increasing the number of augmentations can help, there's a point where additional augmentations may no longer provide meaningful improvements. For example, applying the same augmentation repeatedly might not introduce enough new information to help the model.
+   - **Quality vs. Quantity**: More augmentations don’t always equate to better performance. The augmentations need to be meaningful and diverse enough to teach the model useful patterns. If the augmentations are too aggressive or unrealistic (e.g., rotating an object by 90 degrees when it never appears in that orientation in real life), they might confuse the model or introduce noise.
+
+2. **Computational Cost**:
+   - **Training Time**: Generating additional augmented samples increases the overall size of your training dataset, which means longer training times. The model will have to process more examples, which might increase both the time it takes to train and the memory required to store the augmented data.
+   - **Real-Time Inference**: If augmentations are applied at inference time (during prediction), it may slow down the model’s performance or make the inference process more computationally expensive. It’s usually best to use augmentation only during training.
+
+3. **Choice of Augmentations**:
+   - Not all augmentations will contribute equally to the model's learning process. It’s important to choose augmentations that reflect the kinds of variations the model will encounter in real-world scenarios. For example, applying random translations and rotations is useful for image classification tasks, but for some tasks (like medical imaging), such augmentations might not be appropriate.
+   
+### How Much Can Accuracy Improve?
+- **Small Improvement**: If you already have a reasonably diverse dataset, adding a few augmentations per sample could lead to a small improvement (e.g., 2-5%) in terms of generalization.
+- **Large Improvement**: In cases where you have a small or imbalanced dataset, or the model is overfitting, increasing the augmentations might lead to a more substantial improvement in accuracy (e.g., 10-20%). The more diverse the transformations and the smaller the original dataset, the more benefit you’ll gain.
+
+### Best Practices for Augmentations:
+- **Balanced Augmentation**: Apply a mix of transformations such as rotation, scaling, shearing, flipping, color adjustment, and noise. Randomly vary the intensity of these augmentations to avoid introducing bias.
+- **Experiment**: Use a validation set to test the effects of different augmentations. Track how accuracy or other performance metrics change as you increase the number of augmented samples per original sample.
+- **Stop When Improvements Plateau**: If you observe that performance improvements begin to plateau or degrade with additional augmentations, you may have reached an optimal augmentation level.
+
+### Conclusion:
+In general, increasing the number of augmentations from each sample can improve the accuracy of your model by increasing diversity and helping with generalization. However, this approach has diminishing returns beyond a certain point. The key is to find a balance where the augmentations are diverse and meaningful, without overwhelming the model or causing it to learn overly aggressive transformations.
+Try implementing a few augmentations of your own and experimenting with them. A good reference is here.
+Try combining various augmentations. What is the highest accuracy you can get? What is the smallest training dataset you can take and still get accuracy above 50%?
+To achieve the highest accuracy and determine the smallest training dataset that still gives a satisfactory performance (e.g., above 50% accuracy), several strategies can be used, particularly when leveraging data augmentations. Here’s a general approach you could follow, along with some considerations for your experiment.
+
+### Combining Various Augmentations
+
+When combining various augmentations, the goal is to introduce sufficient diversity to the model’s training data while ensuring that the augmentations are meaningful and realistic. This combination of augmentations may include:
+
+1. **Geometric Transformations**:
+   - **Rotation** (e.g., -30° to +30°): To help the model recognize objects from different orientations.
+   - **Flipping** (horizontal/vertical): Introduces symmetry to the model’s learning, useful for many object recognition tasks.
+   - **Scaling**: To teach the model to recognize objects at different sizes.
+   - **Shearing**: Affects the perspective, helping the model adapt to slight deformations.
+   - **Translation**: Randomly shift the object within the image to improve generalization.
+   
+2. **Color Augmentations**:
+   - **Brightness, Contrast, and Saturation Adjustments**: Ensures that the model doesn’t depend on lighting or color intensity.
+   - **Hue Shifting**: Slightly adjusting the colors to simulate different environmental conditions.
+
+3. **Noise**:
+   - **Gaussian Noise**: Adding noise helps prevent overfitting by forcing the model to generalize better.
+   
+4. **Random Cropping and Padding**:
+   - Randomly crop or pad images to alter the object’s positioning or introduce different field-of-view perspectives.
+
+5. **Mixup or Cutout**:
+   - **Mixup**: Combines two images to create new synthetic training samples, promoting smooth decision boundaries.
+   - **Cutout**: Randomly masks out sections of the image to encourage the model to focus on key features.
+
+### Steps to Maximize Accuracy:
+
+1. **Model Architecture**:
+   - Select a robust model, such as **ResNet**, **EfficientNet**, or even **MobileNet**, depending on the complexity of your dataset. For small datasets, lightweight models (e.g., MobileNet or small ResNet variants) are often more effective.
+
+2. **Augmentation Strategy**:
+   - Implement **random augmentation pipelines** so that each input can be augmented differently on each epoch.
+   - **Test different combinations**: For example, combine rotations with color shifts, flipping with scaling, or translation with noise.
+   - **Tuning Parameters**: Fine-tune the parameters for each augmentation (e.g., the rotation angle, the range of brightness changes) based on the problem domain.
+
+3. **Training Strategy**:
+   - Use **early stopping** and **learning rate scheduling** to optimize training. For small datasets, fine-tuning the learning rate and stopping early can prevent overfitting.
+   - **Cross-validation**: Use cross-validation to ensure that the model's performance is consistent and not due to random chance.
+
+### Smallest Training Dataset for >50% Accuracy
+
+The size of the training dataset required to achieve >50% accuracy will depend heavily on several factors:
+
+1. **Dataset Complexity**:
+   - For a simple dataset (e.g., a binary classification task with clear features), it may be possible to achieve above 50% accuracy with a small dataset (e.g., 200–500 samples).
+   - For more complex tasks (e.g., multi-class classification or tasks with subtle distinctions), a larger dataset will be required, but augmentations can still help reduce the necessary size.
+   
+2. **Data Augmentation Impact**:
+   - **Augmentations allow for the artificial expansion of the training set**. A dataset with as few as 100-500 samples could potentially achieve more than 50% accuracy if combined with powerful augmentation techniques. The more augmentations per sample, the better the model can generalize from limited data.
+   
+3. **Learning Rate and Epochs**:
+   - For a small dataset, you might need fewer epochs and a smaller learning rate to prevent overfitting. Too many epochs might lead to memorizing the training data.
+
+4. **Transfer Learning**:
+   - If the task is challenging, leveraging **transfer learning** (using a pre-trained model) can be incredibly effective. Fine-tuning a model that was pre-trained on a large dataset (such as ImageNet) can allow you to achieve >50% accuracy even with as few as 50–100 samples in the target dataset.
+
+### Expected Results
+
+1. **Maximal Accuracy**:
+   - With an ideal setup—combining augmentations like rotation, scaling, noise, color shifts, etc., alongside a well-optimized model (e.g., ResNet or EfficientNet)—you could expect an accuracy improvement of 10–20% from baseline (no augmentations). For a typical task, accuracy may go from, say, 60-70% without augmentations to 80-90% with well-applied data augmentation.
+
+2. **Small Dataset Size with >50% Accuracy**:
+   - Without augmentations, achieving above 50% accuracy typically requires a dataset with at least several hundred to a few thousand samples. However, with augmentations:
+     - For a simple classification task, a training set of **100-500 samples** might suffice.
+     - For more complex tasks, you may need **500-1,000 samples**, but augmentations could help achieve this performance with fewer samples.
+
+### Summary
+
+- **Maximal Accuracy**: Using a combination of various augmentations can improve your model's accuracy significantly. In ideal conditions, augmentations could boost accuracy by 10–20% or more.
+- **Smallest Dataset for >50% Accuracy**: For a simple task, you might achieve >50% accuracy with **100-500 samples** using augmentations. For more complex tasks, the required dataset size could range from **500 to 1,000 samples** with augmentations and transfer learning.
+Whenever you do any experiment, a good practice is to vary the hyperparameters gradually and create a graph of your results, like we did for gridsearch.
+
+Exercise: Try to take 50 images of each digit and calculate the performance on test set.
+
